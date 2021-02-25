@@ -6,16 +6,17 @@ import traceback
 import itertools
 
 class ConverterOption:
-    def __init__(self, filename, target_service, query_type, output_file):
+    def __init__(self, filename, target_service, query_type, output_file, verbose):
         self.filename = filename
         self.target_service = target_service
         self.query_type = query_type
         self.output_file = output_file
+        self.verbose = verbose
 
 def get_opt() -> ConverterOption:
     # get options
     try:
-        opts, args = getopt.getopt(sys.argv[1:], "hf:s:t:o:", ["help", "file=", "service=", "type=", "output="])
+        opts, args = getopt.getopt(sys.argv[1:], "hvf:s:t:o:", ["help", "file=", "service=", "type=", "output=", "verbose"])
     except getopt.GetoptError as err:
         print(err)
         usage()
@@ -26,6 +27,7 @@ def get_opt() -> ConverterOption:
     target_service = None
     query_target_style = None
     output_file = None
+    verbose = False
     
     # check options
     for o, a in opts:
@@ -40,13 +42,29 @@ def get_opt() -> ConverterOption:
             query_target_style = a
         elif o in ("-o", "--output"):
             output_file = a
+        elif o in ("-v", "--verbose"):
+            verbose = True
         else:
             assert False, "unhandled option"
     
-    return ConverterOption(filename, target_service, query_target_style, output_file)
+    return ConverterOption(filename, target_service, query_target_style, output_file, verbose)
 
 def usage():
-    print("help")
+    print("How to use this script...")
+    print("$ python query-converter.py [options]")
+    print("-f, --file : input filename")
+    print("-s, --service : Amazon services [redshift or athena]")
+    print("-t, --type : convert type")
+    print("    athena type 1: convert LIKE to regexp")
+    print("    athena type 2: convert LIKE to regexp and combine AND with permutations")
+    print("    redshift type 1: convert OR to text ~ '(.*word1.*)|(.*word2.*)' and leave AND as-is")
+    print("    redshift type 2: convert OR to text ~ '(.*word1.*)|(.*word2.*)' and combine AND with permutation")
+    print("    redshift type 3: convert OR to text ~ 'word1|word2' and leave AND as-is")
+    print("    redshift type 4: convert OR to text ~ 'word1|word2' and combine AND with permutation")
+    print("    redshift type 5: convert LIKE with regexp_multi_match and bitstring functions")
+    print("-o, --output : output file")
+    print("-h, --help : help")
+    print("-v, --verbose : verbose converted statements")
     
 def read_sql_statements(filename: str) -> list:
     # read file
@@ -64,24 +82,23 @@ def read_sql_statements(filename: str) -> list:
         formated_stmts.append(formated_stmt)
     return formated_stmts
     
-def write_output_statement(filename: str, stmts: str):
+def write_output_statement(filename: str, stmts: str, verbose: bool):
     if type(stmts) is list:
         stmts = ''.join(stmts)
     
-    if filename is None:
+    if verbose is True and filename is None:
         print(stmts)
+    elif verbose is True and filename is not None:
+        print(stmts)
+        with open(filename, "w+") as f:
+            f.write(stmts)
+        f.close()
     else:
         with open(filename, "w+") as f:
             f.write(stmts)
         f.close()
     
 def convert_statements(stmts: list, target_service: str, query_type: str) -> list:
-    # athena type 1: convert LIKE to regexp
-    # athena type 2: convert LIKE to regexp and combine AND with permutations
-    # redshift type 1: convert OR to text ~ '(.*word1.*)|(.*word2.*)' and leave AND as-is
-    # redshift type 2: convert OR to text ~ '(.*word1.*)|(.*word2.*)' and combine AND with permutation
-    # redshift type 3: convert OR to text ~ 'word1|word2' and leave AND as-is
-    # redshift type 4: convert OR to text ~ 'word1|word2' and combine AND with permutation
     
     try:
         new_stmts = []
@@ -112,18 +129,35 @@ def convert_statements(stmts: list, target_service: str, query_type: str) -> lis
     
                 # combine with OR
                 new_back_stmt = ' OR '.join(new_conn)
-            elif target_service == "redshift":
-                if query_type == "3":
-                    new_conn = convert_redshift_type_3(splited_or_stmt)
-                elif query_type == "4":
-                    new_conn = convert_redshift_type_4(splited_or_stmt)
                 
-                # combine with OR
-                new_back_stmt = '{}'.format(new_conn[0])
-            
-            # combine to completed statement
-            new_stmt = "{} WHERE {} \n;\n".format(front_stmt, new_back_stmt)
-            new_stmts.append(new_stmt)
+                # combine to completed statement
+                new_stmt = "{} WHERE {} \n;\n".format(front_stmt, new_back_stmt)
+                new_stmts.append(new_stmt)
+                
+            elif target_service == "redshift":
+                if query_type == "5":
+                    new_stmt = convert_redshift_type_5(front_stmt, splited_or_stmt)
+                    new_stmts.append(new_stmt)
+                else:
+                    if query_type == "1":
+                        print('Work-in-progress !!')
+                        new_conn = []
+                    elif query_type == "2":
+                        print('Work-in-progress !!')
+                        new_conn = []
+                    elif query_type == "3":
+                        new_conn = convert_redshift_type_3(splited_or_stmt)
+                    elif query_type == "4":
+                        new_conn = convert_redshift_type_4(splited_or_stmt)
+                    elif query_type == "5":
+                        new_conn = convert_redshift_type_5(front_stmt, splited_or_stmt)
+                
+                    # combine with OR
+                    new_back_stmt = '{}'.format(new_conn[0])
+                
+                    # combine to completed statement
+                    new_stmt = "{} WHERE {} \n;\n".format(front_stmt, new_back_stmt)
+                    new_stmts.append(new_stmt)
                 
     except ValueError as e:
         print(e)
@@ -201,7 +235,6 @@ def convert_athena_type_2(splited_or_stmt: list) -> list:
     return new_conn
 
 def convert_redshift_type_3(splited_or_stmt: list) -> list:
-    # new_conn = []
     new_keys = []
     new_values = []
     new_and_values = []
@@ -226,7 +259,6 @@ def convert_redshift_type_3(splited_or_stmt: list) -> list:
     return new_conn
 
 def convert_redshift_type_4(splited_or_stmt: list) -> list:
-    # new_conn = []
     new_keys = []
     new_values = []
     for conn_and in splited_or_stmt:
@@ -257,12 +289,62 @@ def convert_redshift_type_4(splited_or_stmt: list) -> list:
     new_conn = ['{} ~ \'{}\''.format(new_key[0], '|'.join(new_values))]
     return new_conn
 
+def convert_redshift_type_5(front_stmt: str, splited_or_stmt: list) -> list:
+    # new front statement
+    front_list = regex_split_like(front_stmt, 'from')
+    table_name = front_list[1]
+    colume_name = 'id'
+    temp_table_name = 'temp_table'
+    
+    # new back statement
+    new_conn = []
+    new_keys = []
+    new_values = []
+    count_word = 1
+    for conn_and in splited_or_stmt:
+        kv_and = regex_split_like(conn_and, 'and')
+        if len(kv_and) > 1:
+            new_ands = []
+            for x in kv_and:
+                k, v = kv_like_split(x)
+                new_keys.append(k)
+                new_values.append(v)
+                new_ands.append('(bitstring_read(bitstr, {}))'.format(count_word))
+                count_word = count_word + 1
+            and_stmt = ' AND '.join(new_ands)
+            new_conn.append('({})'.format(and_stmt))
+        else:
+            for x in kv_and:
+                k, v = kv_like_split(x)
+                new_keys.append(k)
+                new_values.append(v)
+                new_conn.append('(bitstring_read(bitstr, {}))'.format(count_word))
+                count_word = count_word + 1
+    
+    # check if key has more than 1
+    new_key = list(dict.fromkeys(new_keys))
+    if len(new_key) > 1:
+        raise ValueError("Unexpected 'text' in AND fields")
+
+    # conbime into temp query statement
+    new_value = '"{}"'.format("\", \"".join(new_values))
+    temp_table_stmt = "WITH {} as (SELECT {}, regexp_multi_match({}, json_parse('[{}]')) AS bitstr FROM {})".format(temp_table_name, colume_name, new_key[0], new_value, table_name)
+
+    # combine back_stmt
+    new_conn_2 = [' OR '.join(new_conn)]
+    
+    # hardcoded
+    new_front_stmt = "SELECT COUNT(distinct {}) FROM {}".format(colume_name,temp_table_name)
+    
+    # combine all statements
+    new_stmt = "{} \n{} WHERE {} \n;\n".format(temp_table_stmt, new_front_stmt, new_conn_2[0])
+    return new_stmt
+
 def main():
     convert_obj = get_opt()
     sql_stmts = read_sql_statements(convert_obj.filename)
     converted_stmts = convert_statements(sql_stmts, convert_obj.target_service, convert_obj.query_type)
-    # write_output_statement(convert_obj.output_file, "done")
-    write_output_statement(convert_obj.output_file, converted_stmts)
+    write_output_statement(convert_obj.output_file, converted_stmts, convert_obj.verbose)
 
 if __name__ == "__main__":
     main()
