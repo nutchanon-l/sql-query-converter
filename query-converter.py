@@ -149,8 +149,6 @@ def convert_statements(stmts: list, target_service: str, query_type: str) -> lis
                         new_conn = convert_redshift_type_3(splited_or_stmt)
                     elif query_type == "4":
                         new_conn = convert_redshift_type_4(splited_or_stmt)
-                    elif query_type == "5":
-                        new_conn = convert_redshift_type_5(front_stmt, splited_or_stmt)
                 
                     # combine with OR
                     new_back_stmt = '{}'.format(new_conn[0])
