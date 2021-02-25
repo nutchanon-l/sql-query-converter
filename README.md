@@ -12,6 +12,7 @@ This script is used for convert standard basic "LIKE" SQL statement to be "Regul
 * -s, --service : Amazon services [redshift or athena]
 * -t, --type : convert type
 * -o, --output : output file
+* -v, --verbose : verbose output statement
 * -h, --help : help
 
 ## Example of Input
@@ -37,6 +38,19 @@ WHERE text ~ 'word1|word2'
 SELECT id
 FROM database.table
 WHERE text ~ 'word1|word2|word3.*word4|word4.*word3'
+;
+```
+**Type 5: convert statement to bitstring function**
+```
+WITH temp_table as (
+    SELECT id, regexp_multi_match(text, json_parse('["word1", "word2", "word3", "word4"]')) AS bitstr 
+    FROM database.table
+)
+SELECT COUNT(distinct id)
+FROM temp_table
+WHERE (bitstring_read(bitstr, 1))
+    OR (bitstring_read(bitstr, 2))
+    OR ((bitstring_read(bitstr, 3)) AND (bitstring_read(bitstr, 4)))
 ;
 ```
 ## Example of Amazon Athena Output
